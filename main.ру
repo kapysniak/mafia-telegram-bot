@@ -1,0 +1,58 @@
+import random
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackContext
+
+TOKEN = "Token for the bot The Don @TheDon_Mafia_bot has been revoked. New token is:
+
+8758223475:AAERnFCq_nooCsSsMj1UcK_XwmYvuXEScLI"
+
+players = []
+roles = {}
+alive = []
+game_started = False
+
+async def start(update: Update, context: CallbackContext.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🕵️‍♂️ Mafia Bot\n"
+        "/join — Join game\n"
+        "/startgame — Start game"
+    )
+
+async def join(update: Update, context: CallbackContext.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id not in players:
+        players.append(user.id)
+        await update.message.reply_text(f"{user.first_name} joined the game!")
+    else:
+        await update.message.reply_text("You are already in the game.")
+
+async def startgame(update: Update, context: CallbackContext.DEFAULT_TYPE):
+    global game_started, alive, roles
+    if game_started:
+        await update.message.reply_text("Game already started.")
+        return
+
+    if len(players) < 4:
+        await update.message.reply_text("Need at least 4 players.")
+        return
+
+    game_started = True
+    alive = players.copy()
+
+    mafia = random.choice(players)
+    for p in players:
+        if p == mafia:
+            roles[p] = "mafia"
+            await context.bot.send_message(p, "🔪 You are Mafia")
+        else:
+            roles[p] = "villager"
+            await context.bot.send_message(p, "👤 You are Villager")
+
+    await update.message.reply_text("🌙 Night begins.")
+
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("join", join))
+app.add_handler(CommandHandler("startgame", startgame))
+
+app.run_polling()
