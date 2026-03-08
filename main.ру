@@ -110,7 +110,8 @@ async def process_night_result(context: ContextTypes.DEFAULT_TYPE):
 def check_game_end(context: ContextTypes.DEFAULT_TYPE):
     mafia_alive = [p for p in alive if roles[p] == "мафія"]
     if not mafia_alive:
-        asyncio.create_task(context.bot.send_message(alive[0], "Мирні перемогли!"))reset_game()
+        asyncio.create_task(context.bot.send_message(alive[0], "Мирні перемогли!"))
+reset_game()
     elif len(mafia_alive) >= len([p for p in alive if roles[p] != "мафія"]):
         asyncio.create_task(context.bot.send_message(alive[0], "Мафія перемогла!"))
         reset_game()
