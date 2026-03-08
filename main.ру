@@ -1,68 +1,141 @@
-# main.py — бот Mafia "The Don"
+# main.py — Максимальний Telegram Mafia Bot
 import random
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import asyncio
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
-# =============================
-# Токен твого бота
 TOKEN = "8758223475:AAERnFCq_nooCsSsMj1UcK_XwmYvuXEScLI"
-# =============================
 
-# Списки гравців і ролей
 players = []
-roles = {}
 alive = []
+roles = {}
+phase = "day"
+votes = {}
 game_started = False
 
-# Команда /start — привітання
+# -----------------------------
+# /start — інструкція
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🕵️‍♂️ Бот гри Мафія — The Don\n\n"
+        "🕵️ Mafia Bot — The Don\n\n"
+        "Команди:\n"
         "/join — приєднатись до гри\n"
         "/startgame — почати гру"
     )
 
-# Команда /join — приєднатися до гри
+# /join — приєднання
 async def join(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if user.id not in players:
         players.append(user.id)
+        alive.append(user.id)
         await update.message.reply_text(f"{user.first_name} приєднався до гри!")
     else:
         await update.message.reply_text("Ти вже в грі.")
 
-# Команда /startgame — почати гру
+# Роздача ролей
+def assign_roles():
+    global roles
+    roles = {}
+    mafia = random.choice(players)
+    roles[mafia] = "мафія"
+    remaining = [p for p in players if p != mafia]
+    roles[random.choice(remaining)] = "шериф"
+    remaining = [p for p in remaining if roles.get(p) is None]
+    roles[random.choice(remaining)] = "лікар"
+    for p in remaining:
+        roles[p] = "мирний"
+
+# /startgame — початок гри
 async def startgame(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global game_started, alive, roles
+    global game_started, phase, votes
     if game_started:
         await update.message.reply_text("Гра вже йде!")
         return
-
     if len(players) < 4:
         await update.message.reply_text("Потрібно мінімум 4 гравці.")
         return
-
     game_started = True
-    alive = players.copy()
-
-    # Вибір мафії
-    mafia = random.choice(players)
+    votes = {}
+    assign_roles()
     for p in players:
-        if p == mafia:
-            roles[p] = "мафія"
-            await context.bot.send_message(p, "🔪 Ти Мафія")
-        else:
-            roles[p] = "мирний"
-            await context.bot.send_message(p, "👤 Ти Мирний житель")
+        await context.bot.send_message(p, f"Твоя роль: {roles[p]}")
+    phase = "night"
+    await update.message.reply_text("🌙 Ніч почалася. Мафія обирає жертву.")
+    await night_phase(update, context)
 
-    await update.message.reply_text("🌙 Ніч. Мафія обирає жертву.")
+# Нічна фаза
+async def night_phase(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mafia_players = [p for p in players if roles[p] == "мафія" and p in alive]
+    if not mafia_players:
+        await update.message.reply_text("Мафія знищена! Гру завершено.")
+        reset_game()
+        return
+
+    for m in mafia_players:
+        keyboard = [[InlineKeyboardButton(context.bot.get_chat(p).first_name, callback_data=str(p))] 
+                    for p in alive if p != m]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(m, "Вибери, кого вбити цієї ночі:", reply_markup=reply_markup)
+
+# Обробка кнопок голосування
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global votes
+    query = update.callback_query
+    await query.answer()
+    voter = query.from_user.id
+    target = int(query.data)
+    if voter not in votes:
+        votes[voter] = target
+        await query.edit_message_text(text=f"Ти обрав {context.bot.get_chat(target).first_name}")
+        if len(votes) == len([p for p in players if roles[p] == "мафія"]):
+            await process_night_result(context)
+    else:
+        await query.edit_message_text(text="Ти вже проголосував!")
+
+# Обробка результату ночі
+async def process_night_result(context: ContextTypes.DEFAULT_TYPE):
+    global alive, votes
+    # Найбільш вибраний гравець
+    targets = list(votes.values())
+    victim = max(set(targets), key=targets.count)
+    alive.remove(victim)
+    votes = {}
+    await context.bot.send_message(victim, "💀 Ти загинув цієї ночі.")
+    await context.bot.send_message(victim, "Роль була: " + roles[victim])
+    await context.bot.send_message(alive[0], f"Ніч завершена. {len(alive)} гравців залишилось.")
+    check_game_end(context)
+
+# Перевірка закінчення гри
+def check_game_end(context: ContextTypes.DEFAULT_TYPE):
+    mafia_alive = [p for p in alive if roles[p] == "мафія"]
+    if not mafia_alive:
+        asyncio.create_task(context.bot.send_message(alive[0], "Мирні перемогли!"))reset_game()
+    elif len(mafia_alive) >= len([p for p in alive if roles[p] != "мафія"]):
+        asyncio.create_task(context.bot.send_message(alive[0], "Мафія перемогла!"))
+        reset_game()
+    else:
+        # Перехід у день
+        asyncio.create_task(day_phase(context))
+
+async def day_phase(context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(alive[0], "День. Обговорення і голосування.")
+    # Тут можна додати кнопки для голосування на вигнання
+    # Після голосування викликати night_phase()
+
+def reset_game():
+    global players, alive, roles, votes, game_started
+    players = []
+    alive = []
+    roles = {}
+    votes = {}
+    game_started = False
 
 # =============================
-# Підключення команд до бота
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("join", join))
 app.add_handler(CommandHandler("startgame", startgame))
+app.add_handler(CallbackQueryHandler(button))
 
-# Запуск бота
 app.run_polling()
